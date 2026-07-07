@@ -2,77 +2,79 @@ from django.shortcuts import render
 import json
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from .models import Usuario
 
 
 def bienvenida(request):
-    return render(request, 'Bienvenida.html')
-
-
-# "Base de datos" en memoria
-usuarios = [
-    {"id": 1, "nombre": "Juan Perez", "email": "juan@example.com", "rol": "admin"},
-    {"id": 2, "nombre": "Maria Lopez", "email": "maria@example.com", "rol": "admin"},
-    {"id": 3, "nombre": "Carlos Ramirez", "email": "carlos@example.com", "rol": "invitado"},
-    {"id": 4, "nombre": "Ana Torres", "email": "ana@example.com", "rol": "invitado"},
-    {"id": 5, "nombre": "Luis Mendoza", "email": "luis@example.com", "rol": "invitado"},
-]
-
-
-def _siguiente_id():
-    return max([u["id"] for u in usuarios], default=0) + 1
+    return render(request, 'bienvenida.html')
 
 
 @csrf_exempt
 def usuarios_lista(request):
     if request.method == "GET":
         nombre_query = request.GET.get("nombre")
-        resultado = usuarios
         if nombre_query:
-            resultado = [u for u in usuarios if nombre_query.lower() in u["nombre"].lower()]
+            usuarios = Usuario.objects.filter(nombre__icontains=nombre_query)
+        else:
+            usuarios = Usuario.objects.all()
+        
+        resultado = [usuario.to_dict() for usuario in usuarios]
         return JsonResponse(resultado, safe=False)
 
     elif request.method == "POST":
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
-            return JsonResponse({"error": "JSON invalido"}, status=400)
+            return JsonResponse({"error": "JSON inválido"}, status=400)
 
         nombre = data.get("nombre")
         email = data.get("email")
-        rol = data.get("rol", "invitado")  # si no mandan rol, por defecto es invitado
+        rol = data.get("rol", "invitado")
+
         if not nombre or not email:
             return JsonResponse({"error": "nombre y email son requeridos"}, status=400)
 
-        nuevo_usuario = {"id": _siguiente_id(), "nombre": nombre, "email": email, "rol": rol}
-        usuarios.append(nuevo_usuario)
-        return JsonResponse(nuevo_usuario, status=201)
+        # Validar que el email no exista
+        if Usuario.objects.filter(email=email).exists():
+            return JsonResponse({"error": "El email ya está registrado"}, status=400)
 
-    return JsonResponse({"error": "Metodo no permitido"}, status=405)
+        usuario = Usuario.objects.create(nombre=nombre, email=email, rol=rol)
+        return JsonResponse(usuario.to_dict(), status=201)
+
+    return JsonResponse({"error": "Método no permitido"}, status=405)
 
 
 @csrf_exempt
 def usuarios_detalle(request, usuario_id):
-    usuario = next((u for u in usuarios if u["id"] == usuario_id), None)
-
-    if usuario is None:
+    try:
+        usuario = Usuario.objects.get(id=usuario_id)
+    except Usuario.DoesNotExist:
         return JsonResponse({"error": "Usuario no encontrado"}, status=404)
 
     if request.method == "GET":
-        return JsonResponse(usuario)
+        return JsonResponse(usuario.to_dict())
 
     elif request.method == "PUT":
         try:
             data = json.loads(request.body)
         except json.JSONDecodeError:
-            return JsonResponse({"error": "JSON invalido"}, status=400)
+            return JsonResponse({"error": "JSON inválido"}, status=400)
 
-        usuario["nombre"] = data.get("nombre", usuario["nombre"])
-        usuario["email"] = data.get("email", usuario["email"])
-        usuario["rol"] = data.get("rol", usuario["rol"])
-        return JsonResponse(usuario)
+        if "nombre" in data:
+            usuario.nombre = data["nombre"]
+        if "email" in data:
+            # Validar que el nuevo email no exista en otro usuario
+            if Usuario.objects.filter(email=data["email"]).exclude(id=usuario_id).exists():
+                return JsonResponse({"error": "El email ya está registrado"}, status=400)
+            usuario.email = data["email"]
+        if "rol" in data:
+            usuario.rol = data["rol"]
+
+        usuario.save()
+        return JsonResponse(usuario.to_dict())
 
     elif request.method == "DELETE":
-        usuarios.remove(usuario)
-        return JsonResponse({"mensaje": "Usuario eliminado"}, status=200)
+        usuario.delete()
+        return JsonResponse({"mensaje": "Usuario eliminado correctamente"}, status=200)
 
-    return JsonResponse({"error": "Metodo no permitido"}, status=405)
+    return JsonResponse({"error": "Método no permitido"}, status=405)
